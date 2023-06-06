@@ -31,8 +31,7 @@ def _load_cls(module_path: str, cls_name: str) -> Any:
     """
 
     module_path_fixed = module_path
-    if module_path_fixed.endswith(".py"):
-        module_path_fixed = module_path_fixed[:-3]
+    module_path_fixed = module_path_fixed.removesuffix(".py")
     module_path_fixed = module_path_fixed.replace("/", ".")
 
     module = importlib.import_module(module_path_fixed)
@@ -40,13 +39,11 @@ def _load_cls(module_path: str, cls_name: str) -> Any:
     rreload(module)
     module = importlib.reload(module)
 
-    assert hasattr(module, cls_name), "{} file should contain {} class".format(
-        module_path, cls_name
-    )
+    assert hasattr(
+        module, cls_name
+    ), f"{module_path} file should contain {cls_name} class"
 
-    cls = getattr(module, cls_name)
-
-    return cls
+    return getattr(module, cls_name)
 
 
 def load_config(config_path: str, config_name: str = "Config"):

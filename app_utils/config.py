@@ -13,9 +13,7 @@ def get_size(x):
             return float(x.replace("MB", "")) * (2**20)
         if x.endswith("KB"):
             return float(x.replace("KB", "")) * (2**10)
-        if x.endswith("B"):
-            return float(x.replace("B", ""))
-        return 2**31
+        return float(x.replace("B", "")) if x.endswith("B") else 2**31
     except Exception:
         return 2**31
 
@@ -54,7 +52,7 @@ default_cfg = {
     ),
     "cfg_file": "text_causal_language_modeling_config",
     "start_page": "home",
-    "kaggle_command": ("kaggle competitions download -c " "dataset"),
+    "kaggle_command": "kaggle competitions download -c " "dataset",
     "problem_types": [
         "text_causal_language_modeling_config",
     ],
@@ -81,12 +79,8 @@ default_cfg = {
     "user_settings": {
         "theme_dark": True,
         "default_aws_bucket_name": f"{os.getenv('AWS_BUCKET', 'bucket_name')}",
-        "default_aws_access_key": os.environ["AWS_ACCESS_KEY_ID"]
-        if "AWS_ACCESS_KEY_ID" in os.environ
-        else "",
-        "default_aws_secret_key": os.environ["AWS_SECRET_ACCESS_KEY"]
-        if "AWS_SECRET_ACCESS_KEY" in os.environ
-        else "",
+        "default_aws_access_key": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        "default_aws_secret_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
         "default_kaggle_username": "",
         "default_kaggle_secret_key": "",
         "set_max_epochs": 50,

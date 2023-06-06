@@ -116,21 +116,6 @@ def start_process(cfg: Any, gpu_list: List, process_queue: List) -> subprocess.P
                 ",".join([str(x) for x in process_queue]),
             ]
         )
-    # Do not delete for debug purposes
-    # elif num_gpus == 1:
-    #     p = subprocess.Popen(
-    #         [
-    #             "env",
-    #             f"CUDA_VISIBLE_DEVICES={','.join(gpu_list)}",
-    #             "python",
-    #             "-u",
-    #             "train_wave.py",
-    #             "-P",
-    #             config_name,
-    #             "-Q",
-    #             ",".join([str(x) for x in process_queue]),
-    #         ]
-    #     )
     else:
         free_port = find_free_port()
         p = subprocess.Popen(
@@ -138,7 +123,7 @@ def start_process(cfg: Any, gpu_list: List, process_queue: List) -> subprocess.P
                 "env",
                 f"CUDA_VISIBLE_DEVICES={','.join(gpu_list)}",
                 "torchrun",
-                f"--nproc_per_node={str(num_gpus)}",
+                f"--nproc_per_node={num_gpus}",
                 f"--master_port={str(free_port)}",
                 "train_wave.py",
                 "-P",
@@ -185,20 +170,20 @@ def s3_session(aws_access_key: str, aws_secret_key: str) -> Any:
     )
     s3 = session.resource("s3")
     # if no key is present, disable signing
-    if aws_access_key == "" and aws_secret_key == "":
+    if not aws_access_key and not aws_secret_key:
         s3.meta.client.meta.events.register("choose-signer.s3.*", disable_signing)
 
     return s3
 
 
 def filter_valid_files(files):
-    valid_files = [
+    return [
         file
         for file in files
-        if any([file.endswith(ext) for ext in default_cfg.allowed_file_extensions])
+        if any(
+            file.endswith(ext) for ext in default_cfg.allowed_file_extensions
+        )
     ]
-
-    return valid_files
 
 
 def s3_file_options(
@@ -228,16 +213,12 @@ def s3_file_options(
 
         folder = "/".join(bucket_split[1:])
 
-        files = []
-        for s3_file in s3_bucket.objects.filter(Prefix=f"{folder}/"):
-            if s3_file.key == f"{folder}/":
-                continue
-
-            files.append(s3_file.key)
-
-        files = filter_valid_files(files)
-        return files
-
+        files = [
+            s3_file.key
+            for s3_file in s3_bucket.objects.filter(Prefix=f"{folder}/")
+            if s3_file.key != f"{folder}/"
+        ]
+        return filter_valid_files(files)
     except Exception as e:
         logger.warning(f"Can't load S3 datasets list: {e}")
         return None
@@ -316,7 +297,7 @@ class S3Progress:
     async def poll(self):
         """Update wave ui"""
 
-        while self._percentage / 100 < 1:
+        while self._percentage < 100:
             await self.update_ui()
             await self._q.sleep(0.1)
         await self.update_ui()
@@ -951,7 +932,7 @@ def check_dependencies(cfg: Any, pre: str, k: str, q: Q, dataset_import: bool = 
     else:
         dependencies = [x for x in dependencies if x.key not in ["data_format"]]
 
-    if len(dependencies) > 0:
+    if dependencies:
         all_deps = 0
         for d in dependencies:
             if isinstance(q.client[f"{pre}/cfg/{d.key}"], (list, tuple)):
@@ -976,12 +957,7 @@ def is_visible(k: str, cfg: Any, q: Q) -> bool:
         List of ui elements
     """
 
-    visibility = 1
-
-    if visibility < cfg._get_visibility(k):
-        return False
-
-    return True
+    return cfg._get_visibility(k) <= 1
 
 
 def get_ui_elements(
@@ -1011,11 +987,7 @@ def get_ui_elements(
 
     for k, v in cfg_dict.items():
 
-        if "api" in k:
-            password = True
-        else:
-            password = False
-
+        password = "api" in k
         if k.startswith("_") or cfg._get_visibility(k) < 0:
 
             if q.client[f"{pre}/cfg_mode/from_cfg"]:
@@ -1182,10 +1154,7 @@ def get_parent_element(cfg: Any, beautify: bool = True):
     if hasattr(cfg, "_parent_experiment"):
         key = "Parent Experiment"
         value = cfg._parent_experiment
-        if beautify:
-            return ui.stat_list_item(label=key, value=value)
-        return {key: value}
-
+        return ui.stat_list_item(label=key, value=value) if beautify else {key: value}
     return None
 
 
@@ -1204,8 +1173,7 @@ def get_cfg_elements(cfg: Any, q: Q, beautify: bool = True) -> List[StatListItem
 
     items = []
 
-    parent_element = get_parent_element(cfg, beautify)
-    if parent_element:
+    if parent_element := get_parent_element(cfg, beautify):
         items.append(parent_element)
 
     cfg_dict = cfg.__dict__
@@ -1217,7 +1185,7 @@ def get_cfg_elements(cfg: Any, q: Q, beautify: bool = True) -> List[StatListItem
         if k.startswith("_") or cfg._get_visibility(k) < 0:
             continue
 
-        if any([x in k for x in ["api"]]):
+        if any(x in k for x in ["api"]):
             continue
 
         type_annotation = type_annotations[k]
@@ -1233,8 +1201,7 @@ def get_cfg_elements(cfg: Any, q: Q, beautify: bool = True) -> List[StatListItem
             elements_group = get_cfg_elements(cfg=v, q=q)
             t = elements_group
         else:
-            raise _get_type_annotation_error(v, type_annotations[k])
-
+            raise _get_type_annotation_error(v, type_annotation)
         items += t
 
     return items
@@ -1262,13 +1229,13 @@ def get_grouped_cfg_elements(cfg: Any, q: Q) -> dict:
         if k.startswith("_") or cfg._get_visibility(k) < 0:
             continue
 
-        if any([x in k for x in ["api"]]):
+        if any(x in k for x in ["api"]):
             continue
 
         type_annotation = type_annotations[k]
 
         if type_annotation in KNOWN_TYPE_ANNOTATIONS:
-            grouped_cfg_dict.update({k: v})
+            grouped_cfg_dict[k] = v
         elif dataclasses.is_dataclass(v):
             group_items = get_cfg_elements(cfg=v, q=q, beautify=False)
             group_items = {
@@ -1276,10 +1243,9 @@ def get_grouped_cfg_elements(cfg: Any, q: Q) -> dict:
                 for d in group_items
                 for k, v in d.items()
             }
-            grouped_cfg_dict.update({k: group_items})
+            grouped_cfg_dict[k] = group_items
         else:
-            raise _get_type_annotation_error(v, type_annotations[k])
-
+            raise _get_type_annotation_error(v, type_annotation)
     return grouped_cfg_dict
 
 
@@ -1314,9 +1280,10 @@ def get_experiment_status(path: str) -> Tuple[str, str]:
                     if status == "failed":
                         single_gpu_failures.append(info)
         # Get the most detailed failure info
-        if len(single_gpu_failures) > 0:
-            detailed_gpu_failures = [x for x in single_gpu_failures if x != "See logs"]
-            if len(detailed_gpu_failures) > 0:
+        if single_gpu_failures:
+            if detailed_gpu_failures := [
+                x for x in single_gpu_failures if x != "See logs"
+            ]:
                 return "failed", detailed_gpu_failures[0]
             else:
                 return "failed", single_gpu_failures[0]
@@ -1354,41 +1321,32 @@ def get_experiments_status(df: DataFrame) -> Tuple[List[str], List[str]]:
             zombie = p.status() == "zombie"
         except psutil.NoSuchProcess:
             pass
-        if not psutil.pid_exists(pid) or zombie:
-            running = False
-        else:
-            running = True
-
+        running = bool(psutil.pid_exists(pid) and not zombie)
         if running:
-            if status == "none":
+            if status == "failed":
+                status_all.append("failed")
+            elif status in ["none", "queued"]:
                 status_all.append("queued")
             elif status == "running":
                 status_all.append("running")
-            elif status == "queued":
-                status_all.append("queued")
-            elif status == "finished":
-                status_all.append("finished")
             elif status == "stopped":
                 status_all.append("stopped")
-            elif status == "failed":
-                status_all.append("failed")
             else:
                 status_all.append("finished")
+        elif status == "none":
+            status_all.append("failed")
+        elif status == "queued":
+            status_all.append("failed")
+        elif status == "running":
+            status_all.append("failed")
+        elif status == "finished":
+            status_all.append("finished")
+        elif status == "stopped":
+            status_all.append("stopped")
+        elif status == "failed":
+            status_all.append("failed")
         else:
-            if status == "none":
-                status_all.append("failed")
-            elif status == "queued":
-                status_all.append("failed")
-            elif status == "running":
-                status_all.append("failed")
-            elif status == "finished":
-                status_all.append("finished")
-            elif status == "stopped":
-                status_all.append("stopped")
-            elif status == "failed":
-                status_all.append("failed")
-            else:
-                status_all.append("failed")
+            status_all.append("failed")
 
     return status_all, info_all
 
@@ -1405,8 +1363,7 @@ def load_binary(path: str, backend: Any) -> Any:
     """
 
     with open(path, "rb") as binary_file:
-        f = backend.load(binary_file)
-        return f
+        return backend.load(binary_file)
 
 
 def load_dill(path: str) -> Any:
@@ -1549,13 +1506,12 @@ def get_experiments_info(df: DataFrame, q: Q) -> DefaultDict:
                     eta = elapsed * (remaining_steps / curr_total_step)
                     if eta == 0:
                         eta = ""
+                    elif eta > 86400:
+                        eta = time.strftime(
+                            "%-jd %H:%M:%S", time.gmtime(float(eta))
+                        )
                     else:
-                        if eta > 86400:
-                            eta = time.strftime(
-                                "%-jd %H:%M:%S", time.gmtime(float(eta))
-                            )
-                        else:
-                            eta = time.strftime("%H:%M:%S", time.gmtime(float(eta)))
+                        eta = time.strftime("%H:%M:%S", time.gmtime(float(eta)))
                 else:
                     eta = "N/A"
             else:
@@ -1767,10 +1723,11 @@ def start_experiment(cfg: Any, q: Q, pre: str, gpu_list: Optional[List] = None) 
     ]
     all_process_queue = []
     for _, row in running_experiments.iterrows():
-        for gpu_id in row["gpu_list"].split(","):
-            if gpu_id in gpu_list:
-                all_process_queue.append(row["process_id"])
-
+        all_process_queue.extend(
+            row["process_id"]
+            for gpu_id in row["gpu_list"].split(",")
+            if gpu_id in gpu_list
+        )
     process_queue = list(set(all_process_queue))
 
     save_dill(f"{cfg.output_directory}/cfg.p", cfg)
@@ -1812,7 +1769,7 @@ def get_frame_stats(frame):
 
     numeric_cols = [col for col in frame if col not in non_numeric_cols]
 
-    if len(non_numeric_cols) == 0 or len(numeric_cols) == 0:
+    if len(non_numeric_cols) == 0 or not numeric_cols:
         stats = frame.describe()
         if len(numeric_cols):
             stats = stats.round(decimals=3)
@@ -1896,11 +1853,7 @@ def load_user_settings(q: Q, force_defaults: bool = False):
 
 
 def save_user_settings(q: Q):
-    # Hacky way to get a dict of q.client key/value pairs
-    user_settings = {}
-    for key in default_cfg.user_settings:
-        user_settings.update({key: q.client[key]})
-
+    user_settings = {key: q.client[key] for key in default_cfg.user_settings}
     # force dataset connector updated when the user decides to click on save
     q.client["dataset/import/s3_bucket"] = q.client["default_aws_bucket_name"]
     q.client["dataset/import/s3_access_key"] = q.client["default_aws_access_key"]
