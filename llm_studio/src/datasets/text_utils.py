@@ -54,8 +54,6 @@ def get_tokenizer(cfg: Any):
         cfg._tokenizer_mask_token_id = tokenizer.unk_token_id
     elif tokenizer.mask_token_id is not None:
         cfg._tokenizer_mask_token_id = tokenizer.mask_token_id
-    elif tokenizer.mask_token_id is not None:
-        cfg._tokenizer_mask_token_id = tokenizer.pad_token_id
     else:
         # setting the mask token id to the last token in the vocabulary
         # this usually is a safe choice and mostly refers to eos token
@@ -65,13 +63,12 @@ def get_tokenizer(cfg: Any):
 
     cfg.tokenizer._stop_words_ids = []
     if len(cfg.prediction.stop_tokens) > 0:
-        for stop_word in cfg.prediction.stop_tokens:
-            cfg.tokenizer._stop_words_ids.append(
-                tokenizer(stop_word, return_tensors="pt", add_special_tokens=False)[
-                    "input_ids"
-                ][0]
-            )
-
+        cfg.tokenizer._stop_words_ids.extend(
+            tokenizer(
+                stop_word, return_tensors="pt", add_special_tokens=False
+            )["input_ids"][0]
+            for stop_word in cfg.prediction.stop_tokens
+        )
         if hasattr(cfg.prediction, "batch_size_inference"):
             cfg.prediction.batch_size_inference = 1
             if cfg.environment._local_rank == 0:

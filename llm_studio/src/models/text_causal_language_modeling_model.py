@@ -22,11 +22,10 @@ class StoppingCriteriaSub(StoppingCriteria):
             logger.info(f"Stopping criteria tokens: {self.stops}")
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
-        for stop in self.stops:
-            if torch.all((stop == input_ids[0][-len(stop) :])).item():
-                return True
-
-        return False
+        return any(
+            torch.all((stop == input_ids[0][-len(stop) :])).item()
+            for stop in self.stops
+        )
 
 
 class Model(nn.Module):
@@ -140,12 +139,12 @@ class Model(nn.Module):
                     "labels",
                 ],
             )
-            output = self.backbone(
-                input_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"],
-                labels=batch["labels"],
-            )
             if calculate_loss:
+                output = self.backbone(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    labels=batch["labels"],
+                )
                 assert self.cfg.training.loss_function == "CrossEntropy"
                 outputs["loss"] = output.loss
 

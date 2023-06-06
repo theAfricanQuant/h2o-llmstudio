@@ -21,9 +21,7 @@ async def initialize_client(q: Q) -> None:
 
     if not q.client.client_initialized:
 
-        q.client.delete_cards = set()
-        q.client.delete_cards.add("init_app")
-
+        q.client.delete_cards = {"init_app"}
         os.makedirs(get_data_dir(q), exist_ok=True)
 
         os.makedirs(default_cfg.dbs_path, exist_ok=True)

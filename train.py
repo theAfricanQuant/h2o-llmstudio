@@ -175,10 +175,7 @@ def run_train(
     scheduler = get_scheduler(cfg=cfg, optimizer=optimizer, epoch_steps=epoch_steps)
 
     if cfg.environment.mixed_precision:
-        if cfg.environment.use_fsdp:
-            scaler = ShardedGradScaler()
-        else:
-            scaler = GradScaler()
+        scaler = ShardedGradScaler() if cfg.environment.use_fsdp else GradScaler()
     else:
         scaler = None
 

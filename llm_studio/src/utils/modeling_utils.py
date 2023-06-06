@@ -88,17 +88,16 @@ def load_model_weights(
     except Exception as e:
         if strict:
             raise e
-        else:
-            if cfg.environment._local_rank == 0:
-                logger.warning(
-                    "Only a part of the pretrained weights was loaded. "
-                    "Some layers can't be initialized with pretrained "
-                    f"weights: {e}"
-                )
+        if cfg.environment._local_rank == 0:
+            logger.warning(
+                "Only a part of the pretrained weights was loaded. "
+                "Some layers can't be initialized with pretrained "
+                f"weights: {e}"
+            )
 
-            for layer_name in re.findall("size mismatch for (.*?):", str(e)):
-                model_weights.pop(layer_name, None)
-            model.load_state_dict(OrderedDict(model_weights), strict=False)
+        for layer_name in re.findall("size mismatch for (.*?):", str(e)):
+            model_weights.pop(layer_name, None)
+        model.load_state_dict(OrderedDict(model_weights), strict=False)
     return model
 
 
@@ -138,9 +137,7 @@ def wrap_model_distributed(model: torch.nn.Module, cfg: Any, fsdp: bool):
         auto_wrap_policy = None
 
         mixed_precision_policy = None
-        dtype = None
-        if cfg.environment.mixed_precision:
-            dtype = torch.float16
+        dtype = torch.float16 if cfg.environment.mixed_precision else None
         if dtype is not None:
             mixed_precision_policy = MixedPrecision(
                 param_dtype=dtype, reduce_dtype=dtype, buffer_dtype=dtype
@@ -189,9 +186,8 @@ def get_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
                 "params": [
                     param
                     for name, param in model.named_parameters()
-                    if (not any(layer in name for layer in differential_layers))
-                    and (not any(nd in name for nd in no_decay))
-                    # and param.requires_grad
+                    if all(layer not in name for layer in differential_layers)
+                    and all(nd not in name for nd in no_decay)
                 ],
                 "lr": cfg.training.learning_rate,
                 "weight_decay": cfg.training.weight_decay,
@@ -200,9 +196,8 @@ def get_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
                 "params": [
                     param
                     for name, param in model.named_parameters()
-                    if (not any(layer in name for layer in differential_layers))
+                    if all(layer not in name for layer in differential_layers)
                     and (any(nd in name for nd in no_decay))
-                    # and param.requires_grad
                 ],
                 "lr": cfg.training.learning_rate,
                 "weight_decay": 0,
@@ -212,8 +207,7 @@ def get_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
                     param
                     for name, param in model.named_parameters()
                     if (any(layer in name for layer in differential_layers))
-                    and (not any(nd in name for nd in no_decay))
-                    # and param.requires_grad
+                    and all(nd not in name for nd in no_decay)
                 ],
                 "lr": cfg.training.differential_learning_rate,
                 "weight_decay": cfg.training.weight_decay,
@@ -251,13 +245,11 @@ def get_scheduler(
         Learning Rate Scheduler
     """
 
-    scheduler = Schedulers.get(cfg.training.schedule)(
+    return Schedulers.get(cfg.training.schedule)(
         optimizer=optimizer,
         num_warmup_steps=cfg.training.warmup_epochs * epoch_steps,
         num_training_steps=cfg.training.epochs * epoch_steps,
     )
-
-    return scheduler
 
 
 def generate_experiment_name() -> str:
@@ -379,22 +371,18 @@ def adjust_batch_size(cfg: Any, train_df: pd.DataFrame) -> int:
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
                     scaler.update()
-                    optimizer.zero_grad(set_to_none=True)
                 else:
                     loss.backward()
                     optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
-
+                optimizer.zero_grad(set_to_none=True)
             break
         except RuntimeError as exception:
-            if is_oom_error(exception):
-                logger.info("OOM error is caught, decreasing the batch size.")
-                garbage_collection_cuda()
-                cfg.training.batch_size = cfg.training.batch_size // 2
-                continue
-            else:
+            if not is_oom_error(exception):
                 raise  # some other error not memory related
 
+            logger.info("OOM error is caught, decreasing the batch size.")
+            garbage_collection_cuda()
+            cfg.training.batch_size = cfg.training.batch_size // 2
     if change_distributed:
         cfg.environment._distributed = True
     garbage_collection_cuda()
@@ -423,12 +411,10 @@ def get_number_of_validation_epochs(training_epochs: int, evaluation_epochs: flo
 def contains_nan(output: Dict):
     return (
         sum(
-            [
-                1
-                for key, val in output.items()
-                if isinstance(val, torch.Tensor)
-                and torch.isnan(val.detach().cpu()).sum() > 0
-            ]
+            1
+            for key, val in output.items()
+            if isinstance(val, torch.Tensor)
+            and torch.isnan(val.detach().cpu()).sum() > 0
         )
         > 0
     )
@@ -454,7 +440,7 @@ def run_inference(
     """
 
     # Store information for evaluation
-    out = dict()
+    out = {}
 
     if cfg.environment._local_rank == 0:
         logger.info(f"Starting {mode} inference")
@@ -471,6 +457,7 @@ def run_inference(
 
     log_update_steps = max(len(dataloader) // 20, 1)
     inf_it = iter(dataloader)
+    calculate_loss = True
     for itr in range(len(dataloader)):
         try:
             data = next(inf_it)
@@ -482,7 +469,6 @@ def run_inference(
 
         batch = cfg.dataset.dataset_class.batch_to_device(data, cfg.environment._device)
 
-        calculate_loss = True
         if cfg.environment.mixed_precision:
             with torch.cuda.amp.autocast():
                 output = model.forward(batch, calculate_loss=calculate_loss)
@@ -618,16 +604,15 @@ def create_nlp_backbone(cfg, model_class=AutoModel, kwargs={}) -> Any:
 
     if cfg.training.lora:
         backbone = prepare_model_for_lora_training(backbone, layer_norm_names=[])
-    else:
-        if cfg.architecture.backbone_dtype != "float32":
-            if cfg.environment.mixed_precision:
-                logger.info("Disabling mixed precision as dtype not set to float32.")
-                cfg.environment.mixed_precision = False
-            if cfg.architecture.backbone_dtype != "bfloat16":
-                logger.warning(
-                    "Pure float16 or int8 training will "
-                    "likely lead to unstable training without adapters."
-                )
+    elif cfg.architecture.backbone_dtype != "float32":
+        if cfg.environment.mixed_precision:
+            logger.info("Disabling mixed precision as dtype not set to float32.")
+            cfg.environment.mixed_precision = False
+        if cfg.architecture.backbone_dtype != "bfloat16":
+            logger.warning(
+                "Pure float16 or int8 training will "
+                "likely lead to unstable training without adapters."
+            )
 
     if cfg.architecture.gradient_checkpointing:
         backbone.gradient_checkpointing_enable()
