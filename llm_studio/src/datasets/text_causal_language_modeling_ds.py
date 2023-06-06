@@ -28,10 +28,10 @@ class CustomDataset(Dataset):
         self.mode = mode
         self.df = df.copy()
 
-        assert self.mode in [
+        assert self.mode in {
             "train",
             "validation",
-        ], f"There is no {self.mode} for the datasets"
+        }, f"There is no {self.mode} for the datasets"
 
         # Get the labels
         has_all_columns = cfg.dataset.answer_column in self.df.columns
@@ -43,19 +43,11 @@ class CustomDataset(Dataset):
             )
 
         if not has_all_columns or has_missing_values:
-            if has_missing_values:
-                message = (
-                    f"The {self.mode} DataFrame"
-                    f" column {cfg.dataset.answer_column}"
-                    " contain missing values."
-                )
-            else:
-                message = (
-                    f"The {self.mode} DataFrame "
-                    "does not contain the required column:"
-                    f" {cfg.dataset.answer_column}."
-                )
-
+            message = (
+                f"The {self.mode} DataFrame column {cfg.dataset.answer_column} contain missing values."
+                if has_missing_values
+                else f"The {self.mode} DataFrame does not contain the required column: {cfg.dataset.answer_column}."
+            )
             raise ValueError(message)
 
         self.tokenizer = get_tokenizer(cfg)
@@ -251,7 +243,7 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict:
         """Returns a single dataset item."""
 
-        sample: Dict = dict()
+        sample: Dict = {}
 
         # Read data
         sample = self._read_data(idx=idx, sample=sample)
@@ -339,8 +331,7 @@ class CustomDataset(Dataset):
     def pad_tokens(
         self, input_ids, attention_mask, max_length, pad_token_id, prefix=""
     ):
-        sample = {}
-        sample[f"{prefix}input_ids"] = torch.full((max_length,), pad_token_id)
+        sample = {f"{prefix}input_ids": torch.full((max_length,), pad_token_id)}
         sample[f"{prefix}input_ids"][-len(input_ids) :] = input_ids
         sample[f"{prefix}attention_mask"] = torch.zeros(max_length)
         sample[f"{prefix}attention_mask"][-len(input_ids) :] = attention_mask

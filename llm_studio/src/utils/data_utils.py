@@ -132,13 +132,12 @@ def read_dataframe_drop_missing_labels(path: str, cfg: Any) -> pd.DataFrame:
     non_missing_columns = input_cols + [cfg.dataset.answer_column]
     verbose = cfg.environment._local_rank == 0
     fill_columns = get_fill_columns(cfg)
-    df = read_dataframe(
+    return read_dataframe(
         path,
         non_missing_columns=non_missing_columns,
         verbose=verbose,
         fill_columns=fill_columns,
     )
-    return df
 
 
 def is_valid_data_frame(path: str, csv_rows: int = 100) -> bool:
@@ -253,8 +252,7 @@ def get_train_dataset(
     if cfg.environment._local_rank == 0 and verbose:
         logger.info("Loading train dataset...")
 
-    train_dataset = cfg.dataset.dataset_class(df=train_df, cfg=cfg, mode="train")
-    return train_dataset
+    return cfg.dataset.dataset_class(df=train_df, cfg=cfg, mode="train")
 
 
 def get_train_dataloader(
@@ -330,9 +328,7 @@ def get_val_dataset(
 
     if verbose and cfg.environment._local_rank == 0:
         logger.info("Loading validation dataset...")
-    val_dataset = cfg.dataset.dataset_class(df=val_df, cfg=cfg, mode="validation")
-
-    return val_dataset
+    return cfg.dataset.dataset_class(df=val_df, cfg=cfg, mode="validation")
 
 
 def get_val_dataloader(
@@ -393,15 +389,15 @@ def cat_batches(
 
     for key, value in data.items():
         if len(value[0].shape) == 0:
-            if type(value[0]) == torch.Tensor:
-                data[key] = torch.stack(value)
-            else:
-                data[key] = np.stack(value)
+            data[key] = (
+                torch.stack(value)
+                if type(value[0]) == torch.Tensor
+                else np.stack(value)
+            )
+        elif type(value[0]) == torch.Tensor:
+            data[key] = torch.cat(value, dim=0)
         else:
-            if type(value[0]) == torch.Tensor:
-                data[key] = torch.cat(value, dim=0)
-            else:
-                data[key] = np.concatenate(value, axis=0)
+            data[key] = np.concatenate(value, axis=0)
 
     return data
 
@@ -527,8 +523,8 @@ def batch_padding(
     elif cfg.tokenizer.padding_quantile == 0:
         return batch
     elif training and cfg.tokenizer.padding_quantile < 1.0:
-        if cfg.tokenizer._padding_side == "left":
-            idx = int(
+        idx = (
+            int(
                 torch.floor(
                     torch.quantile(
                         torch.stack(
@@ -541,8 +537,8 @@ def batch_padding(
                     )
                 )
             )
-        else:
-            idx = int(
+            if cfg.tokenizer._padding_side == "left"
+            else int(
                 torch.ceil(
                     torch.quantile(
                         torch.stack(
@@ -555,11 +551,11 @@ def batch_padding(
                     )
                 )
             )
+        )
+    elif cfg.tokenizer._padding_side == "left":
+        idx = int(torch.where(batch[mask_key] == 1)[1].min())
     else:
-        if cfg.tokenizer._padding_side == "left":
-            idx = int(torch.where(batch[mask_key] == 1)[1].min())
-        else:
-            idx = int(torch.where(batch[mask_key] == 1)[1].max())
+        idx = int(torch.where(batch[mask_key] == 1)[1].max())
 
     if cfg.tokenizer._padding_side == "left":
         for key in pad_keys:

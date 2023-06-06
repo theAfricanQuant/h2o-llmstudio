@@ -185,7 +185,7 @@ class ConfigNLPCausalLMEnvironment(DefaultConfig):
         super().__post_init__()
         self._possible_values["gpus"] = possible_values.String(
             values=tuple(
-                [(str(x), f"GPU #{x+1}") for x in range(torch.cuda.device_count())]
+                (str(x), f"GPU #{x + 1}") for x in range(torch.cuda.device_count())
             ),
             allow_custom=False,
         )

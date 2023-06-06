@@ -121,8 +121,7 @@ def load_dill(path: str) -> Any:
     """
 
     with open(path, "rb") as binary_file:
-        f = dill.load(binary_file)
-        return f
+        return dill.load(binary_file)
 
 
 def save_pickle(path: str, obj: Any, protocol: int = 4) -> None:

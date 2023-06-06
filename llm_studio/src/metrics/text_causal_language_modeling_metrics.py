@@ -17,11 +17,12 @@ logger = logging.getLogger(__name__)
 def sacrebleu_score(
     cfg: Any, results: Dict, val_df: pd.DataFrame, metric: Metric
 ) -> float:
-    scores = []
-    for predicted_text, target_text in zip(
-        results["predicted_text"], results["target_text"]
-    ):
-        scores.append(metric.sentence_score(predicted_text, [target_text]).score)
+    scores = [
+        metric.sentence_score(predicted_text, [target_text]).score
+        for predicted_text, target_text in zip(
+            results["predicted_text"], results["target_text"]
+        )
+    ]
     return np.mean(scores)
 
 
@@ -86,9 +87,7 @@ def gpt_score(
     scores = [x[0] for x in ret]
     explanations = [x[1] for x in ret]
 
-    if raw_results:
-        return scores, explanations
-    return np.mean(scores)
+    return (scores, explanations) if raw_results else np.mean(scores)
 
 
 class Metrics:
